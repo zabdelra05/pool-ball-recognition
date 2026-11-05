@@ -2,6 +2,31 @@
 #include "Utilities.h"
 
 
+
+Mat GetTransformation(Mat& image) {
+	Mat transformed;
+	
+	Point2f src_points[4] = {
+		{337, 35},
+		{1570, 21},
+		{1888, 451},
+		{38, 472}
+	};
+
+	Point2f dest_points[4] = {
+		{0, 0},
+		{1433, 0},
+		{1433, 682},
+		{0, 682}
+	};
+
+	Mat transformation = cv::getPerspectiveTransform(src_points, dest_points);
+
+	warpPerspective(image, transformed, transformation, Size(1434, 683));
+
+	return transformed;
+}
+
 void MyApplication()
 {
 	char* file_location = "Media/Pool/";
@@ -30,7 +55,8 @@ void MyApplication()
 		{
 			cout << "Could not open " << pool_image[file_no] << endl;
 		}
-		imshow(pool_files[file_no], pool_image[file_no]);
+		Mat transformed_image = GetTransformation(pool_image[file_no]);
+		imshow(pool_files[file_no], transformed_image);
 
 		char pause = cv::waitKey();  // This introduces a delay between frame.  The length of the delay/number can be reduced.
 	}
