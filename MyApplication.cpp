@@ -32,15 +32,26 @@ Mat getTransformation(Mat& image) {
 }
 
 Mat findEdges(Mat& image) {
-	Mat gray, blurred, binary, edges;
-	// Convert to grayscale
-	cvtColor(image, gray, COLOR_BGR2GRAY);
+	Mat hsvImage, satImage, blurred, binary, edges, closed;
+	// Convert to hsv
+	cvtColor(image, hsvImage, COLOR_BGR2HSV);
+
+	// Split channels and use the Saturation channel
+	vector<Mat> hsvChannels;
+	split(hsvImage, hsvChannels);
+	satImage = hsvChannels[1];
+
 	// Apply Gaussian blur
-	GaussianBlur(gray, blurred, Size(5, 5), 0);
+	GaussianBlur(satImage, blurred, Size(5, 5), 0);
+
 	// Find optimal threshold using Otsu thresholding
 	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.8;
+
 	// Apply Canny edge detection
-	Canny(blurred, edges, otsu_thresh / 3, otsu_thresh);
+	Canny(blurred, edges, otsu_thresh / 3, otsu_thresh, 3, true);
+
+	// Perform a closing morphological operation on the resulting edges
+	morphologyEx(edges, closed, MORPH_CLOSE, getStructuringElement(MORPH_RECT, Size(3, 3)));
 	return edges;
 }
 
