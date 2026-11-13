@@ -1,8 +1,6 @@
 ﻿
 #include "Utilities.h"
 
-
-
 Mat getTransformation(Mat& image) {
 	Mat transformed;
 	
@@ -31,8 +29,14 @@ Mat getTransformation(Mat& image) {
 	return transformed;
 }
 
-Mat findEdges(Mat& image) {
-	Mat hsvImage, satImage, blurred, binary, edges, closed;
+
+Mat findCircles(Mat& image, int tableNum) {
+	Mat hsvImage, satImage, blurred, binary, edges, closed, blurredEdges, output;
+	image.copyTo(output); // Our output image (to be used later)
+
+	// Our circles vector
+	vector<Vec3f> circles;
+	int radius = 43 / 2;
 	// Convert to hsv
 	cvtColor(image, hsvImage, COLOR_BGR2HSV);
 
@@ -45,15 +49,23 @@ Mat findEdges(Mat& image) {
 	GaussianBlur(satImage, blurred, Size(5, 5), 0);
 
 	// Find optimal threshold using Otsu thresholding
-	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.8;
+	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.55;
 
-	// Apply Canny edge detection
-	Canny(blurred, edges, otsu_thresh / 3, otsu_thresh, 3, true);
+	// Apply Canny edge detection to simulate HoughCircles edge detection for development purposes
+	//Canny(blurred, edges, otsu_thresh / 2, otsu_thresh, 3, true);
 
-	// Perform a closing morphological operation on the resulting edges
-	morphologyEx(edges, closed, MORPH_CLOSE, getStructuringElement(MORPH_RECT, Size(3, 3)));
-	return edges;
+
+	// Detect and return circles detected based on radius and otsu threshold value
+	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.8, otsu_thresh, radius * 0.5, radius-1, radius+4);
+	for (auto& p : circles) {
+		cout << p[0] << " " << p[1] << " " << p[2] << endl;
+		circle(output, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
+	}
+
+	return output;
 }
+
+
 
 void MyApplication()
 {
@@ -84,9 +96,8 @@ void MyApplication()
 			cout << "Could not open " << pool_image[file_no] << endl;
 		}
 		Mat transformed_image = getTransformation(pool_image[file_no]);
-		Mat edges = findEdges(transformed_image);
-		imshow(pool_files[file_no], transformed_image);
-		imshow("Edges", edges);
+		Mat circles = findCircles(transformed_image, file_no);
+		imshow(pool_files[file_no], circles);
 		char pause = cv::waitKey();  // This introduces a delay between frame.  The length of the delay/number can be reduced.
 	}
 
