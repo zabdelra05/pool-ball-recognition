@@ -1,7 +1,7 @@
 ﻿
 #include "Utilities.h"
 
-vector<vector<int>> TRAINING = {
+vector<vector<int>> TRAINING_COORDS = {
 	{908, 253},
 	{959, 250},
 	{1013, 255},
@@ -9,7 +9,12 @@ vector<vector<int>> TRAINING = {
 	{1132, 254},
 	{1184, 262},
 	{1244, 256},
+	{1307, 253},
+	{797, 293},
+	{300, 300}
 };
+
+vector<vector<int>> TRAINING_DATA = vector<vector<int>>(TRAINING_COORDS.size(), vector<int>(3, 0));
 
 vector<vector<vector<int>>> GROUND_TRUTH = {
 	{
@@ -50,7 +55,51 @@ vector<vector<vector<int>>> GROUND_TRUTH = {
 	}
 };
 
+void calculateTrainingData(Mat& trainingImage, vector<vector<int>>& trainingCoords, vector<vector<int>>& trainingData) {
+	Mat hsvImage;
+	cvtColor(trainingImage, hsvImage, COLOR_BGR2HSV);
+	vector<Mat> hsvChannels;
+	split(hsvImage, hsvChannels);
+	int radius = 21;
 
+	for (int i = 0; i < trainingCoords.size(); i++) {
+		int x = trainingCoords[i][0];
+		int y = trainingCoords[i][1];
+
+		vector<int> hueBins(180, 0);
+		int total = 0;
+		int sat = 0;
+		int val = 0;
+
+		// Gather Hue, Saturation, and Value data for the training data in the specified radius around the training coordinates
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dy = -radius; dy <= radius; dy++) {
+				int nx = x + dx;
+				int ny = y + dy;
+				if (sqrt(pow(x - nx, 2) + pow(y - ny, 2)) <= radius) {
+					if (nx >= 0 && nx < trainingImage.cols && ny >= 0 && ny < trainingImage.rows) {
+						total++;
+						sat += hsvChannels[1].at<uchar>(ny, nx);
+						val += hsvChannels[2].at<uchar>(ny, nx);
+						hueBins[hsvChannels[0].at<uchar>(ny, nx)]++;
+					}
+				}
+			}
+		}
+
+		// Average out the saturation and value, and find the most common hue in the area
+		trainingData[i][1] = sat / total;
+		trainingData[i][2] = val / total;
+
+		for (int h = 0; h < 180; h++) {
+			if (hueBins[h] > hueBins[trainingData[i][0]]) {
+				trainingData[i][0] = h;
+			}
+		}
+
+	}
+
+}
 
 Mat getTransformation(Mat& image) {
 	Mat transformed;
@@ -82,6 +131,7 @@ Mat getTransformation(Mat& image) {
 
 
 void printMetrics(int tp, int fp, int fn) {
+	// Calculate and print out some metrics for performance evaluation of the algorithms
 	float accuracy = (float)tp / (tp + fp + fn);
 	float precision = (float)tp / (tp + fp);
 	float recall = (float)tp / (tp + fn);
@@ -118,7 +168,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, 
 
 			if (tx == -1 || ty == -1) continue;
 
-			if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2 && !matched[j]) {
+			if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2 && !matched[j]) { // Match a circle if it is within the radius of the ground truth and hasn't been matched yet
 				matched[j] = true;
 				matches.push_back(circles[i]);
 				tp++;
@@ -142,6 +192,8 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, 
 	return matches;
 
 }
+
+
 
 Mat findCircles(Mat& image, int table_num) {
 	Mat hsvImage, satImage, blurred, binary, edges, closed, blurredEdges, output;
@@ -197,6 +249,16 @@ void MyApplication()
 	int number_of_images = sizeof(pool_files) / sizeof(pool_files[0]);
 	Mat* pool_image = new Mat[number_of_images];
 	//Mat* new_pool_image = new Mat[number_of_images];
+
+	Mat training_image = imread("Media/Pool/AllBalls.jpeg", -1);
+	Mat transformed_training_image = getTransformation(training_image);
+	calculateTrainingData(transformed_training_image, TRAINING_COORDS, TRAINING_DATA);
+
+	for(int i = 0; i < TRAINING_DATA.size()-1; i++) {
+		cout << "Training Data for Ball " << i + 1 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
+	}
+	cout << "Training Data for Background" << ": Hue = " << TRAINING_DATA[TRAINING_DATA.size() - 1][0] << ", Saturation = " << TRAINING_DATA[TRAINING_DATA.size() - 1][1] << ", Value = " << TRAINING_DATA[TRAINING_DATA.size() - 1][2] << endl;
+
 	for (int file_no = 0; (file_no < number_of_images); file_no++)
 	{
 		cout << pool_files[file_no] << endl;
