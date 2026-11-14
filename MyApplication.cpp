@@ -1,9 +1,60 @@
 ﻿
 #include "Utilities.h"
 
+vector<vector<int>> TRAINING = {
+	{908, 253},
+	{959, 250},
+	{1013, 255},
+	{1072, 256},
+	{1132, 254},
+	{1184, 262},
+	{1244, 256},
+};
+
+vector<vector<vector<int>>> GROUND_TRUTH = {
+	{
+		{1092, 309}, {1212, 429}, {1131, 383}, {1050, 335},
+		{1211, 285}, {1170, 261}, {1173, 352}, {1132, 331},
+		{1210, 240}, {1170, 310}, {1169, 407}, {1135, 281},
+		{1212, 374}, {1091, 360}, {1213, 331}, {29, 288}
+	},
+	{
+		{1103, 282}, {1224, 620}, {1121, 391}, {1046, 315},
+		{1305, 310}, {621, 202}, {1173, 361}, {1132, 331},
+		{725, 177}, {1269, 185}, {798, 665}, {438, 296},
+		{1235, 53}, {1090, 362}, {1205, 399}, {1169, 507}
+	},
+	{
+		{908, 23}, {1224, 616}, {1199, 447}, {29, 336},
+		{1406, 305}, {621, 210}, {1294, 260}, {1252, 226},
+		{725, 177}, {1270, 171}, {798, 665}, {351, 249},
+		{1233, 53}, {901, 169}, {1201, 399}, {29, 434}
+	},
+	{
+		{908, 23}, {1407, 546}, {1204, 444}, {-1, -1},
+		{1406, 305}, {621, 210}, {1294, 260}, {1252, 226},
+		{724, 181}, {1270, 171}, {798, 665}, {351, 249},
+		{1231, 58}, {901, 169}, {1201, 399}, {1392, 88}
+	},
+	{
+		{23, 535}, {1407, 546}, {1204, 444}, {-1, -1},
+		{1406, 305}, {25, 131}, {1294, 260}, {1252, 226},
+		{72, 538}, {1270, 171}, {798, 665}, {351, 249},
+		{-1, -1}, {901, 169}, {1201, 399}, {26, 608}
+	},
+	{
+		{23, 535}, {1364, 477}, {1204, 444}, {-1, -1},
+		{1406, 305}, {25, 131}, {1294, 260}, {1252, 226},
+		{72, 538}, {1270, 171}, {-1, -1}, {351, 249},
+		{-1, -1}, {901, 169}, {1201, 399}, {947, 629}
+	}
+};
+
+
+
 Mat getTransformation(Mat& image) {
 	Mat transformed;
-	
+
 	// Warped image dimensions
 	float height = 683;
 	float width = 1434;
@@ -30,7 +81,69 @@ Mat getTransformation(Mat& image) {
 }
 
 
-Mat findCircles(Mat& image, int tableNum) {
+void printMetrics(int tp, int fp, int fn) {
+	float accuracy = (float)tp / (tp + fp + fn);
+	float precision = (float)tp / (tp + fp);
+	float recall = (float)tp / (tp + fn);
+	float f1_score = 2 * (precision * recall) / (precision + recall);
+	
+	cout << endl << "Values" << endl;
+	cout << "True Positive: " << tp << endl;
+	cout << "False Positive: " << fp << endl;
+	cout << "False Negative: " << fn << endl << endl;
+
+	cout << "Metrics" << endl;
+	cout << "Accuracy: " << accuracy << endl;
+	cout << "Precision: " << precision << endl;
+	cout << "Recall: " << recall << endl;
+	cout << "F1 Score: " << f1_score << endl << endl;
+}
+
+vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, int radius) {
+	vector<bool> matched = vector<bool>(truth.size(), false);
+	vector<Vec3f> matches = {};
+
+	int tp = 0;
+	int fp = 0;
+	int fn = 0;
+
+	for (int i = 0; i < circles.size(); i++) {
+		int x = cvRound(circles[i][0]);
+		int y = cvRound(circles[i][1]);
+
+		bool false_circle = true;
+		for (int j = 0; j < truth.size(); j++) {
+			int tx = cvRound(truth[j][0]);
+			int ty = cvRound(truth[j][1]);
+
+			if (tx == -1 || ty == -1) continue;
+
+			if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2 && !matched[j]) {
+				matched[j] = true;
+				matches.push_back(circles[i]);
+				tp++;
+				false_circle = false;
+				break;
+			}
+		}
+		if (false_circle) fp++;
+	}
+
+	for (int m = 0; m < matched.size(); m++) {
+		if (!matched[m] && !(truth[m][0] == -1 || truth[m][1] == -1)) {
+			cout << "Missed: " << truth[m][0] << " " << truth[m][1] << endl;
+			fn++;
+		}
+	}
+	
+	cout << "Detection Results" << endl;
+	printMetrics(tp, fp, fn);
+
+	return matches;
+
+}
+
+Mat findCircles(Mat& image, int table_num) {
 	Mat hsvImage, satImage, blurred, binary, edges, closed, blurredEdges, output;
 	image.copyTo(output); // Our output image (to be used later)
 
@@ -49,16 +162,17 @@ Mat findCircles(Mat& image, int tableNum) {
 	GaussianBlur(satImage, blurred, Size(5, 5), 0);
 
 	// Find optimal threshold using Otsu thresholding
-	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.55;
+	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.6;
 
 	// Apply Canny edge detection to simulate HoughCircles edge detection for development purposes
 	//Canny(blurred, edges, otsu_thresh / 2, otsu_thresh, 3, true);
 
 
 	// Detect and return circles detected based on radius and otsu threshold value
-	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.8, otsu_thresh, radius * 0.5, radius-1, radius+4);
+	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.9, otsu_thresh, radius * 0.5, radius-1, radius + 4);
+
+	vector<Vec3f> matched = testDetection(circles, GROUND_TRUTH[table_num], radius);
 	for (auto& p : circles) {
-		cout << p[0] << " " << p[1] << " " << p[2] << endl;
 		circle(output, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
 	}
 
@@ -71,7 +185,6 @@ void MyApplication()
 {
 	char* file_location = "Media/Pool/";
 	char* pool_files[] = {
-		"AllBalls.jpeg",
 		"Table1.jpeg",
 		"Table2.jpeg",
 		"Table3.jpeg",
