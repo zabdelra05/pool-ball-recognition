@@ -9,10 +9,16 @@ vector<vector<int>> TRAINING_COORDS = {
 	{1132, 254},
 	{1184, 262},
 	{1244, 256},
-	{1307, 253},
-	{797, 293},
-	{300, 300}
+	{1307, 253}, // White Ball
+	{797, 293}, // Black Ball
+	// Background Data
+	{300, 300},
+	{30, 60},
+	{100, 25},
+	{715, 30},
+	{1410, 50}
 };
+
 
 vector<vector<int>> TRAINING_DATA = vector<vector<int>>(TRAINING_COORDS.size(), vector<int>(3, 0));
 
@@ -149,7 +155,7 @@ void printMetrics(int tp, int fp, int fn) {
 	cout << "F1 Score: " << f1_score << endl << endl;
 }
 
-vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, int radius) {
+vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) {
 	vector<bool> matched = vector<bool>(truth.size(), false);
 	vector<Vec3f> matches = {};
 
@@ -160,6 +166,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, 
 	for (int i = 0; i < circles.size(); i++) {
 		int x = cvRound(circles[i][0]);
 		int y = cvRound(circles[i][1]);
+		int radius = cvRound(circles[i][2]);
 
 		bool false_circle = true;
 		for (int j = 0; j < truth.size(); j++) {
@@ -186,18 +193,240 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth, 
 		}
 	}
 	
-	cout << "Detection Results" << endl;
+	cout << endl << "Circle Detection Results" << endl;
 	printMetrics(tp, fp, fn);
 
 	return matches;
 
 }
 
+void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth) {
+	int tp = 0;
+	int fp = 0;
+	int fn = 0;
+
+	for (int i = 0; i < balls.size(); i++) {
+
+		int x = cvRound(balls[i][0]);
+		int y = cvRound(balls[i][1]);
+		int radius = cvRound(balls[i][2]);
+
+		int tx = cvRound(truth[i][0]);
+		int ty = cvRound(truth[i][1]);
+
+		if ((x != -1 || y != -1) && (tx == -1 || ty == -1)) {
+			fp++;
+			continue;
+		}
+		else if ((x == -1 || y == -1) && (tx != -1 || ty != -1)) {
+			fn++;
+			continue;
+		}
+
+		if (tx == -1 || ty == -1) continue;
+
+		if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2)  // Match a correctly classified ball
+			tp++;
+		else
+			fp++;
+	}
+
+	printMetrics(tp, fp, fn);
+}
+
+int hueDifference(int hue1, int hue2) {
+	int diff = abs(hue1 - hue2);
+	return min(diff, 180 - diff);
+}
 
 
-Mat findCircles(Mat& image, int table_num) {
-	Mat hsvImage, satImage, blurred, binary, edges, closed, blurredEdges, output;
-	image.copyTo(output); // Our output image (to be used later)
+struct Ball {
+	Vec3f position;
+	float blackRatio;
+	float whiteRatio;
+	float bgRatio;
+	int maxHue;
+	float avgValue;
+	Ball(int x, int y, int radius, float blackRatio, float whiteRatio, float bgRatio, int maxHue, float avgValue)
+		: position(x, y, radius), blackRatio(blackRatio), whiteRatio(whiteRatio), bgRatio(bgRatio), maxHue(maxHue), avgValue(avgValue) {
+	}
+};
+
+vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& trainingData, Mat& image) {
+	Mat hsvImage;
+	cvtColor(image, hsvImage, COLOR_BGR2HSV);
+	vector<Mat> hsvChannels;
+	split(hsvImage, hsvChannels);
+
+	vector<Ball> balls;
+
+	for (auto& circle : circles) {
+		int x = cvRound(circle[0]);
+		int y = cvRound(circle[1]);
+		int radius = cvRound(circle[2]);
+
+		vector<int> hueBins(180, 0);
+		int blackPixels = 0;
+		int whitePixels = 0;
+		int bgPixels = 0;
+		int totalPixels = 0;
+		int totalValue = 0;
+		int sumValue = 0;
+
+		for (int dx = -radius + 2; dx <= radius - 2; dx++) {
+			for (int dy = -radius + 2; dy <= radius - 2; dy++) {
+				int nx = x + dx;
+				int ny = y + dy;
+				if (sqrt(pow(x - nx, 2) + pow(y - ny, 2)) <= radius - 2) {
+					if (nx >= 0 && nx < hsvImage.cols && ny >= 0 && ny < hsvImage.rows) {
+						totalPixels++;
+						int hue = hsvChannels[0].at<uchar>(ny, nx);
+						int sat = hsvChannels[1].at<uchar>(ny, nx);
+						int val = hsvChannels[2].at<uchar>(ny, nx);
+
+						if (abs(sat - trainingData[7][1]) <= 30 && abs(val - trainingData[7][2]) <= 30)
+							blackPixels++;
+						else if (abs(sat - trainingData[8][1]) <= 30 && abs(val - trainingData[8][2]) <= 30)
+							whitePixels++;
+						else {
+							bool isBg = false;
+							for (int bg = 9; bg < trainingData.size(); bg++) {
+								if (abs(trainingData[bg][2] - val) <= 30 && abs(trainingData[bg][1] - sat) <= 30 && hueDifference(hue, trainingData[bg][0]) <= 10) {
+									isBg = true;
+									bgPixels++;
+									break;
+								}
+							}
+							if (!isBg && sat >= 50 && val >= 50) {
+								hueBins[hue]++;
+								totalValue++;
+								sumValue += val;
+							}
+								
+						}
+					}
+				}
+			}
+		}
+
+		float blackRatio = (float)blackPixels / totalPixels;
+		float whiteRatio = (float)whitePixels / totalPixels;
+		float bgRatio = (float)bgPixels / totalPixels;
+		float avgValue = (float)sumValue / totalValue;
+
+		int maxHue = 0;
+		for (int h = 0; h < 180; h++) {
+			if (hueBins[h] > hueBins[maxHue]) {
+				maxHue = h;
+			}
+		}
+
+		balls.push_back(Ball(x, y, radius, blackRatio, whiteRatio, bgRatio, maxHue, avgValue));
+	}
+	return balls;
+}
+
+vector<Vec3f> classifyBalls(vector<Ball>& balls, vector<vector<int>>& trainingData) {
+	vector<Vec3f> classifiedBalls(16, Vec3f(-1, -1, -1));
+	Vec3f whiteBall, blackBall;
+
+	vector<vector<Ball>> ballGroups(7);
+	float whiteBallRatio = 0.0f, blackBallRatio = 0.0f;
+	int hueThreshold = 15;
+
+	for (auto& ball : balls) {
+		if (ball.whiteRatio > whiteBallRatio) {
+			whiteBall = ball.position;
+			whiteBallRatio = ball.whiteRatio;
+		}
+		if (ball.blackRatio > blackBallRatio) {
+			blackBall = ball.position;
+			blackBallRatio = ball.blackRatio;
+		}
+	}
+
+	//cout << "Black Ball: " << blackBall[0] << ", " << blackBall[1] << ", " << blackBall[2] << endl;
+	//cout << "White Ball: " << whiteBall[0] << ", " << whiteBall[1] << ", " << whiteBall[2] << endl;
+
+	classifiedBalls[7] = blackBall;
+	classifiedBalls[15] = whiteBall;
+
+	for (auto& ball : balls) {
+		if (ball.position == whiteBall || ball.position == blackBall || ball.bgRatio >= 0.3) {
+			//cout << "Ignoring ball at (" << ball.position[0] << ", " << ball.position[1] << ") due to background ratio or being white/black ball." << endl;
+			continue;
+		}
+			
+		int group = -1;
+		int minHueDiff = 180;
+		for (int i = 0; i < 7; i++) {
+			int hueDiff = hueDifference(ball.maxHue, trainingData[i][0]);
+
+			if (hueDiff <= hueThreshold && hueDiff < minHueDiff) {
+				group = i;
+				minHueDiff = hueDiff;
+			}
+
+		}
+		if (group == 2 || group == 6) {
+			float redDist = abs(ball.avgValue - trainingData[2][2]);
+			float maroonDist = abs(ball.avgValue - trainingData[6][2]);
+
+			group = (redDist < maroonDist) ? 2 : 6;
+			ballGroups[group].push_back(ball);
+		}
+		else if (group != -1)
+			ballGroups[group].push_back(ball);
+	}
+
+	for (int i = 0; i < 7; i++) {
+		if (ballGroups[i].empty()) continue;
+
+		sort(ballGroups[i].begin(), ballGroups[i].end(), [&trainingData, i](const Ball& a, const Ball& b) {
+			float distA = hueDifference(a.maxHue, trainingData[i][0]);
+			float distB = hueDifference(b.maxHue, trainingData[i][0]);
+
+			return distA < distB;
+		});
+
+		
+
+		if (ballGroups[i].size() >= 2) {
+			sort(ballGroups[i].begin(), ballGroups[i].begin() + 2, [](const Ball& a, const Ball& b) {
+				return a.whiteRatio < b.whiteRatio;
+			});
+			if (ballGroups[i].size() > 2) {
+				//cout << "Adding: " << ballGroups[i][0].position[0] << ", " << ballGroups[i][0].position[1] << " to group " << i << endl;
+				//cout << "Adding: " << ballGroups[i].back().position[0] << ", " << ballGroups[i].back().position[1] << " to group " << i << endl;
+
+				for (int j = 1; j < ballGroups[i].size() - 1; j++) {
+					
+					//cout << "Dropping (" << ballGroups[i][j].position[0] << ", " << ballGroups[i][j].position[1] << ", " << ballGroups[i][j].position[2] << ") from group" << i << " Max Hue: " << ballGroups[i][j].maxHue <<  endl;
+				}
+			}
+			
+			classifiedBalls[i] = ballGroups[i][0].position;
+			classifiedBalls[i + 8] = ballGroups[i][1].position;
+		}
+		else if (ballGroups[i].size() == 1) {
+			if (ballGroups[i][0].whiteRatio > 0.3f) {
+				classifiedBalls[i + 8] = ballGroups[i][0].position;
+			}
+			else {
+				classifiedBalls[i] = ballGroups[i][0].position;
+			}
+		}
+	}
+
+	return classifiedBalls;
+}
+
+
+vector<Mat> findCircles(Mat& image, int table_num) {
+	Mat hsvImage, satImage, blurred, binary, edges, closed, blurredEdges, output1, output2, output3;
+	image.copyTo(output1); // Detection matrix
+	image.copyTo(output2); // Matched classification matrix
+	image.copyTo(output3); // Raw Classification matrix
 
 	// Our circles vector
 	vector<Vec3f> circles;
@@ -223,14 +452,37 @@ Mat findCircles(Mat& image, int table_num) {
 	// Detect and return circles detected based on radius and otsu threshold value
 	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.9, otsu_thresh, radius * 0.5, radius-1, radius + 4);
 
-	vector<Vec3f> matched = testDetection(circles, GROUND_TRUTH[table_num], radius);
+	vector<Vec3f> matched = testDetection(circles, GROUND_TRUTH[table_num]);
+	vector<Vec3f> classifiedRaw = classifyBalls(evaluateBalls(circles, TRAINING_DATA, image), TRAINING_DATA);
+	vector<Vec3f> classifiedMatched = classifyBalls(evaluateBalls(matched, TRAINING_DATA, image), TRAINING_DATA);
+
+	cout << "Matched Circles Classification Results" << endl;
+	testClassification(classifiedMatched, GROUND_TRUTH[table_num]);
+
+	cout << "Raw Circles Classification Results" << endl;
+	testClassification(classifiedRaw, GROUND_TRUTH[table_num]);
+
 	for (auto& p : circles) {
-		circle(output, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
+		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
+		circle(output1, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
 	}
+	for (int i = 0; i < classifiedMatched.size(); i++) {
+		auto& p = classifiedMatched[i];
+		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
+		putText(output2, to_string(i+1), Point(cvRound(p[0])-5, cvRound(p[1])), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 255, 0), 1);
+		circle(output2, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
+	}
+	for (int i = 0; i < classifiedRaw.size(); i++) {
+		auto& p = classifiedRaw[i];
+		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
+		putText(output3, to_string(i+1), Point(cvRound(p[0])-5, cvRound(p[1])), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 255, 0), 1);
+		circle(output3, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
+	}
+	
+	vector<Mat> output = { output1, output2, output3 };
 
 	return output;
 }
-
 
 
 void MyApplication()
@@ -254,10 +506,15 @@ void MyApplication()
 	Mat transformed_training_image = getTransformation(training_image);
 	calculateTrainingData(transformed_training_image, TRAINING_COORDS, TRAINING_DATA);
 
-	for(int i = 0; i < TRAINING_DATA.size()-1; i++) {
+	for(int i = 0; i < 8; i++) 
 		cout << "Training Data for Ball " << i + 1 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
-	}
-	cout << "Training Data for Background" << ": Hue = " << TRAINING_DATA[TRAINING_DATA.size() - 1][0] << ", Saturation = " << TRAINING_DATA[TRAINING_DATA.size() - 1][1] << ", Value = " << TRAINING_DATA[TRAINING_DATA.size() - 1][2] << endl;
+	
+	cout << endl;
+
+	for (int i = 8; i < TRAINING_DATA.size(); i++)
+		cout << "Training Data for Background " << i - 7 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
+
+	//cout << "Training Data for Background" << ": Hue = " << TRAINING_DATA[TRAINING_DATA.size() - 1][0] << ", Saturation = " << TRAINING_DATA[TRAINING_DATA.size() - 1][1] << ", Value = " << TRAINING_DATA[TRAINING_DATA.size() - 1][2] << endl;
 
 	for (int file_no = 0; (file_no < number_of_images); file_no++)
 	{
@@ -271,8 +528,10 @@ void MyApplication()
 			cout << "Could not open " << pool_image[file_no] << endl;
 		}
 		Mat transformed_image = getTransformation(pool_image[file_no]);
-		Mat circles = findCircles(transformed_image, file_no);
-		imshow(pool_files[file_no], circles);
+		vector<Mat> circles = findCircles(transformed_image, file_no);
+		imshow("Detections", circles[0]);
+		imshow("Matched Classifications", circles[1]);
+		imshow("Raw Classifications", circles[2]);
 		char pause = cv::waitKey();  // This introduces a delay between frame.  The length of the delay/number can be reduced.
 	}
 
