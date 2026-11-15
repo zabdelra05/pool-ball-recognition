@@ -293,9 +293,9 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 						int sat = hsvChannels[1].at<uchar>(ny, nx);
 						int val = hsvChannels[2].at<uchar>(ny, nx);
 
-						if (abs(sat - trainingData[7][1]) <= 30 && abs(val - trainingData[7][2]) <= 30) // Match with black ball S and V
+						if (abs(sat - trainingData[7][1]) <= 40 && abs(val - trainingData[7][2]) <= 40) // Match with black ball S and V
 							blackPixels++;
-						else if (abs(sat - trainingData[8][1]) <= 30 && abs(val - trainingData[8][2]) <= 30) // Match with white ball S and V
+						else if (abs(sat - trainingData[8][1]) <= 40 && abs(val - trainingData[8][2]) <= 40) // Match with white ball S and V
 							whitePixels++;
 						else { // Ignore pixels matching background signature
 							bool isBg = false;
@@ -306,7 +306,7 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 									break;
 								}
 							} // Add hue to relevant bin if S and V are sufficient
-							if (!isBg && sat >= 50 && val >= 50) {
+							if (!isBg && sat >= 80 && val >= 40) {
 								hueBins[hue]++;
 								totalValue++;
 								sumValue += val;
