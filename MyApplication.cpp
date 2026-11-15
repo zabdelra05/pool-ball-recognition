@@ -11,7 +11,8 @@ vector<vector<int>> TRAINING_COORDS = {
 	{1244, 256},
 	{1307, 253}, // White Ball
 	{797, 293}, // Black Ball
-	// Background Data
+
+	// Background Data (random non-ball samples)
 	{300, 300},
 	{30, 60},
 	{100, 25},
@@ -20,9 +21,9 @@ vector<vector<int>> TRAINING_COORDS = {
 };
 
 
-vector<vector<int>> TRAINING_DATA = vector<vector<int>>(TRAINING_COORDS.size(), vector<int>(3, 0));
+vector<vector<int>> TRAINING_DATA = vector<vector<int>>(TRAINING_COORDS.size(), vector<int>(3, 0)); // Training data for each ball and background containing Hue, Saturation, and Value
 
-vector<vector<vector<int>>> GROUND_TRUTH = {
+vector<vector<vector<int>>> GROUND_TRUTH = { // Ground truth coordinates for each table image
 	{
 		{1092, 309}, {1212, 429}, {1131, 383}, {1050, 335},
 		{1211, 285}, {1170, 261}, {1173, 352}, {1132, 331},
@@ -60,6 +61,7 @@ vector<vector<vector<int>>> GROUND_TRUTH = {
 		{-1, -1}, {901, 169}, {1201, 399}, {947, 629}
 	}
 };
+vector<vector<float>> RESULTS(3, vector<float>(4, 0)); // Cumulative accuracy, precision, recall and F1 scores for each task across all pictures (to be averaged)
 
 void calculateTrainingData(Mat& trainingImage, vector<vector<int>>& trainingCoords, vector<vector<int>>& trainingData) {
 	Mat hsvImage;
@@ -136,13 +138,18 @@ Mat getTransformation(Mat& image) {
 }
 
 
-void printMetrics(int tp, int fp, int fn) {
+void printMetrics(int tp, int fp, int fn, int resultIndex) {
 	// Calculate and print out some metrics for performance evaluation of the algorithms
 	float accuracy = (float)tp / (tp + fp + fn);
 	float precision = (float)tp / (tp + fp);
 	float recall = (float)tp / (tp + fn);
 	float f1_score = 2 * (precision * recall) / (precision + recall);
-	
+
+	RESULTS[resultIndex][0] += accuracy;
+	RESULTS[resultIndex][1] += precision;
+	RESULTS[resultIndex][2] += recall;
+	RESULTS[resultIndex][3] += f1_score;
+
 	cout << endl << "Values" << endl;
 	cout << "True Positive: " << tp << endl;
 	cout << "False Positive: " << fp << endl;
@@ -186,7 +193,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) 
 		if (false_circle) fp++;
 	}
 
-	for (int m = 0; m < matched.size(); m++) {
+	for (int m = 0; m < matched.size(); m++) { // Count false negatives for any unmatched ground truth circles
 		if (!matched[m] && !(truth[m][0] == -1 || truth[m][1] == -1)) {
 			cout << "Missed: " << truth[m][0] << " " << truth[m][1] << endl;
 			fn++;
@@ -194,13 +201,13 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) 
 	}
 	
 	cout << endl << "Circle Detection Results" << endl;
-	printMetrics(tp, fp, fn);
+	printMetrics(tp, fp, fn, 0);
 
 	return matches;
 
 }
 
-void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth) {
+void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth, int resultIndex) {
 	int tp = 0;
 	int fp = 0;
 	int fn = 0;
@@ -214,39 +221,39 @@ void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth) {
 		int tx = cvRound(truth[i][0]);
 		int ty = cvRound(truth[i][1]);
 
-		if ((x != -1 || y != -1) && (tx == -1 || ty == -1)) {
+		if ((x != -1 || y != -1) && (tx == -1 || ty == -1)) { // False positive, detected a ball that doesn't exist
 			fp++;
 			continue;
 		}
-		else if ((x == -1 || y == -1) && (tx != -1 || ty != -1)) {
+		else if ((x == -1 || y == -1) && (tx != -1 || ty != -1)) { // False negative, failed to detect a ball that exists
 			fn++;
 			continue;
 		}
 
 		if (tx == -1 || ty == -1) continue;
 
-		if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2)  // Match a correctly classified ball
+		if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2)  // Match if the correct ball centre within threshold distance of the detected ball centre
 			tp++;
 		else
 			fp++;
 	}
 
-	printMetrics(tp, fp, fn);
+	printMetrics(tp, fp, fn, resultIndex);
 }
 
-int hueDifference(int hue1, int hue2) {
+int hueDifference(int hue1, int hue2) { // Considers wrap-around distance value for Hue
 	int diff = abs(hue1 - hue2);
 	return min(diff, 180 - diff);
 }
 
 
-struct Ball {
+struct Ball { // Ball struct used to store information about a circle for classification
 	Vec3f position;
-	float blackRatio;
-	float whiteRatio;
-	float bgRatio;
-	int maxHue;
-	float avgValue;
+	float blackRatio; // Black pixel ratio
+	float whiteRatio; // White pixel ratio
+	float bgRatio; // Background pixel ratio
+	int maxHue; // Most frequent Hue
+	float avgValue; // Avg Lighting (for segregating similar colours such as red and maroon)
 	Ball(int x, int y, int radius, float blackRatio, float whiteRatio, float bgRatio, int maxHue, float avgValue)
 		: position(x, y, radius), blackRatio(blackRatio), whiteRatio(whiteRatio), bgRatio(bgRatio), maxHue(maxHue), avgValue(avgValue) {
 	}
@@ -270,25 +277,27 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 		int whitePixels = 0;
 		int bgPixels = 0;
 		int totalPixels = 0;
+
+		// Used for brightness comparison between red and maroon balls
 		int totalValue = 0;
 		int sumValue = 0;
 
-		for (int dx = -radius + 2; dx <= radius - 2; dx++) {
-			for (int dy = -radius + 2; dy <= radius - 2; dy++) {
+		for (int dx = -radius + 1; dx <= radius - 1; dx++) {
+			for (int dy = -radius + 1; dy <= radius - 1; dy++) {
 				int nx = x + dx;
 				int ny = y + dy;
-				if (sqrt(pow(x - nx, 2) + pow(y - ny, 2)) <= radius - 2) {
+				if (sqrt(pow(x - nx, 2) + pow(y - ny, 2)) <= radius - 1) { // Extract pixels from circle and their HSV values
 					if (nx >= 0 && nx < hsvImage.cols && ny >= 0 && ny < hsvImage.rows) {
 						totalPixels++;
 						int hue = hsvChannels[0].at<uchar>(ny, nx);
 						int sat = hsvChannels[1].at<uchar>(ny, nx);
 						int val = hsvChannels[2].at<uchar>(ny, nx);
 
-						if (abs(sat - trainingData[7][1]) <= 30 && abs(val - trainingData[7][2]) <= 30)
+						if (abs(sat - trainingData[7][1]) <= 30 && abs(val - trainingData[7][2]) <= 30) // Match with black ball S and V
 							blackPixels++;
-						else if (abs(sat - trainingData[8][1]) <= 30 && abs(val - trainingData[8][2]) <= 30)
+						else if (abs(sat - trainingData[8][1]) <= 30 && abs(val - trainingData[8][2]) <= 30) // Match with white ball S and V
 							whitePixels++;
-						else {
+						else { // Ignore pixels matching background signature
 							bool isBg = false;
 							for (int bg = 9; bg < trainingData.size(); bg++) {
 								if (abs(trainingData[bg][2] - val) <= 30 && abs(trainingData[bg][1] - sat) <= 30 && hueDifference(hue, trainingData[bg][0]) <= 10) {
@@ -296,7 +305,7 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 									bgPixels++;
 									break;
 								}
-							}
+							} // Add hue to relevant bin if S and V are sufficient
 							if (!isBg && sat >= 50 && val >= 50) {
 								hueBins[hue]++;
 								totalValue++;
@@ -309,12 +318,13 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 			}
 		}
 
+		// Calculate ratios
 		float blackRatio = (float)blackPixels / totalPixels;
 		float whiteRatio = (float)whitePixels / totalPixels;
 		float bgRatio = (float)bgPixels / totalPixels;
 		float avgValue = (float)sumValue / totalValue;
 
-		int maxHue = 0;
+		int maxHue = 0; // Find most frequent Hue
 		for (int h = 0; h < 180; h++) {
 			if (hueBins[h] > hueBins[maxHue]) {
 				maxHue = h;
@@ -327,15 +337,16 @@ vector<Ball> evaluateBalls(vector<Vec3f>& circles, vector<vector<int>>& training
 }
 
 vector<Vec3f> classifyBalls(vector<Ball>& balls, vector<vector<int>>& trainingData) {
-	vector<Vec3f> classifiedBalls(16, Vec3f(-1, -1, -1));
+	vector<Vec3f> classifiedBalls(16, Vec3f(-1, -1, -1)); // Initialise balls as not found
 	Vec3f whiteBall, blackBall;
 
-	vector<vector<Ball>> ballGroups(7);
+	vector<vector<Ball>> ballGroups(7); // Ball colour groups
 	float whiteBallRatio = 0.0f, blackBallRatio = 0.0f;
-	int hueThreshold = 15;
+	int hueThreshold = 10;
 
 	for (auto& ball : balls) {
-		if (ball.whiteRatio > whiteBallRatio) {
+		//cout << ball.position[0] << " " << ball.position[1] << " " << ball.whiteRatio << " " << ball.avgValue << endl;
+		if (ball.whiteRatio > whiteBallRatio) { // Find whitest and blackest balls to classify as white and black balls before finding coloured balls
 			whiteBall = ball.position;
 			whiteBallRatio = ball.whiteRatio;
 		}
@@ -352,7 +363,7 @@ vector<Vec3f> classifyBalls(vector<Ball>& balls, vector<vector<int>>& trainingDa
 	classifiedBalls[15] = whiteBall;
 
 	for (auto& ball : balls) {
-		if (ball.position == whiteBall || ball.position == blackBall || ball.bgRatio >= 0.3) {
+		if (ball.position == whiteBall || ball.position == blackBall || ball.bgRatio >= 0.4) { // Ignore white and black balls and circles with too much background
 			//cout << "Ignoring ball at (" << ball.position[0] << ", " << ball.position[1] << ") due to background ratio or being white/black ball." << endl;
 			continue;
 		}
@@ -360,39 +371,37 @@ vector<Vec3f> classifyBalls(vector<Ball>& balls, vector<vector<int>>& trainingDa
 		int group = -1;
 		int minHueDiff = 180;
 		for (int i = 0; i < 7; i++) {
-			int hueDiff = hueDifference(ball.maxHue, trainingData[i][0]);
-
+			int hueDiff = hueDifference(ball.maxHue, trainingData[i][0]); // Find closest matching colour
+			 
 			if (hueDiff <= hueThreshold && hueDiff < minHueDiff) {
 				group = i;
 				minHueDiff = hueDiff;
 			}
 
 		}
-		if (group == 2 || group == 6) {
+		if (group == 2 || group == 6) { // Differentiate between red and maroon based on average brightness
 			float redDist = abs(ball.avgValue - trainingData[2][2]);
 			float maroonDist = abs(ball.avgValue - trainingData[6][2]);
 
 			group = (redDist < maroonDist) ? 2 : 6;
 			ballGroups[group].push_back(ball);
 		}
-		else if (group != -1)
+		else if (group != -1) // No matching group found, ignore the ball
 			ballGroups[group].push_back(ball);
 	}
 
 	for (int i = 0; i < 7; i++) {
 		if (ballGroups[i].empty()) continue;
 
-		sort(ballGroups[i].begin(), ballGroups[i].end(), [&trainingData, i](const Ball& a, const Ball& b) {
+		sort(ballGroups[i].begin(), ballGroups[i].end(), [&trainingData, i](const Ball& a, const Ball& b) { // Sort based on hue difference to training data
 			float distA = hueDifference(a.maxHue, trainingData[i][0]);
 			float distB = hueDifference(b.maxHue, trainingData[i][0]);
 
 			return distA < distB;
 		});
 
-		
-
 		if (ballGroups[i].size() >= 2) {
-			sort(ballGroups[i].begin(), ballGroups[i].begin() + 2, [](const Ball& a, const Ball& b) {
+			sort(ballGroups[i].begin(), ballGroups[i].begin() + 2, [](const Ball& a, const Ball& b) { // Larger white ratio is more likely to be the striped ball
 				return a.whiteRatio < b.whiteRatio;
 			});
 			if (ballGroups[i].size() > 2) {
@@ -409,7 +418,7 @@ vector<Vec3f> classifyBalls(vector<Ball>& balls, vector<vector<int>>& trainingDa
 			classifiedBalls[i + 8] = ballGroups[i][1].position;
 		}
 		else if (ballGroups[i].size() == 1) {
-			if (ballGroups[i][0].whiteRatio > 0.3f) {
+			if (ballGroups[i][0].whiteRatio > 0.3f) { // Stripe whiteness threshold
 				classifiedBalls[i + 8] = ballGroups[i][0].position;
 			}
 			else {
@@ -442,7 +451,7 @@ vector<Mat> findCircles(Mat& image, int table_num) {
 	// Apply Gaussian blur
 	GaussianBlur(satImage, blurred, Size(5, 5), 0);
 
-	// Find optimal threshold using Otsu thresholding
+	// Find automated threshold using Otsu thresholding
 	double otsu_thresh = threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU) * 0.6;
 
 	// Apply Canny edge detection to simulate HoughCircles edge detection for development purposes
@@ -450,32 +459,35 @@ vector<Mat> findCircles(Mat& image, int table_num) {
 
 
 	// Detect and return circles detected based on radius and otsu threshold value
-	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.9, otsu_thresh, radius * 0.5, radius-1, radius + 4);
+	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, radius * 1.9, otsu_thresh, radius * 0.45, radius-1, radius + 4);
 
 	vector<Vec3f> matched = testDetection(circles, GROUND_TRUTH[table_num]);
 	vector<Vec3f> classifiedRaw = classifyBalls(evaluateBalls(circles, TRAINING_DATA, image), TRAINING_DATA);
 	vector<Vec3f> classifiedMatched = classifyBalls(evaluateBalls(matched, TRAINING_DATA, image), TRAINING_DATA);
 
 	cout << "Matched Circles Classification Results" << endl;
-	testClassification(classifiedMatched, GROUND_TRUTH[table_num]);
+	testClassification(classifiedMatched, GROUND_TRUTH[table_num], 1);
 
 	cout << "Raw Circles Classification Results" << endl;
-	testClassification(classifiedRaw, GROUND_TRUTH[table_num]);
+	testClassification(classifiedRaw, GROUND_TRUTH[table_num], 2);
 
+	// Draw relevant text and circles on appropriate output matrices for each task
 	for (auto& p : circles) {
 		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
 		circle(output1, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
 	}
+
 	for (int i = 0; i < classifiedMatched.size(); i++) {
 		auto& p = classifiedMatched[i];
 		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
-		putText(output2, to_string(i+1), Point(cvRound(p[0])-5, cvRound(p[1])), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 255, 0), 1);
+		putText(output2, to_string(i+1), Point(cvRound(p[0]) - 10, cvRound(p[1]) + 5), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 0), 2);
 		circle(output2, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
 	}
+
 	for (int i = 0; i < classifiedRaw.size(); i++) {
 		auto& p = classifiedRaw[i];
 		if (p[0] == -1 || p[1] == -1 || p[2] == -1) continue;
-		putText(output3, to_string(i+1), Point(cvRound(p[0])-5, cvRound(p[1])), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 255, 0), 1);
+		putText(output3, to_string(i+1), Point(cvRound(p[0]) - 10, cvRound(p[1]) + 5), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 0), 2);
 		circle(output3, Point(cvRound(p[0]), cvRound(p[1])), cvRound(p[2]), Scalar(255, 0, 0), 2);
 	}
 	
@@ -512,7 +524,7 @@ void MyApplication()
 	cout << endl;
 
 	for (int i = 8; i < TRAINING_DATA.size(); i++)
-		cout << "Training Data for Background " << i - 7 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
+		cout << "Training Data for Background Sample " << i - 7 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
 
 	//cout << "Training Data for Background" << ": Hue = " << TRAINING_DATA[TRAINING_DATA.size() - 1][0] << ", Saturation = " << TRAINING_DATA[TRAINING_DATA.size() - 1][1] << ", Value = " << TRAINING_DATA[TRAINING_DATA.size() - 1][2] << endl;
 
@@ -535,5 +547,18 @@ void MyApplication()
 		char pause = cv::waitKey();  // This introduces a delay between frame.  The length of the delay/number can be reduced.
 	}
 
-}
+	// Performance metrics averaged over all images for each task
+	for (int i = 0; i < RESULTS.size(); i++) {
+		string type = "";
+		if (i == 0) type = "Detection";
+		else if (i == 1) type = "Matched Classification";
+		else if (i == 2) type = "Raw Classification";
 
+		cout << "Results for " << type << ":" << endl;
+		cout << "Average Accuracy: " << RESULTS[i][0] / number_of_images << endl;
+		cout << "Average Precision: " << RESULTS[i][1] / number_of_images << endl;
+		cout << "Average Recall: " << RESULTS[i][2] / number_of_images << endl;
+		cout << "Average F1 Score: " << RESULTS[i][3] / number_of_images << endl;
+		cout << endl;
+	}
+}
