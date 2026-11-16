@@ -61,7 +61,7 @@ vector<vector<vector<int>>> GROUND_TRUTH = { // Ground truth coordinates for eac
 		{-1, -1}, {901, 169}, {1201, 399}, {947, 629}
 	}
 };
-vector<vector<float>> RESULTS(3, vector<float>(4, 0)); // Cumulative accuracy, precision, recall and F1 scores for each task across all pictures (to be averaged)
+vector<vector<float>> RESULTS(3, vector<float>(5, 0)); // Cumulative accuracy, precision, recall and F1 scores for each task across all pictures (to be averaged)
 
 void calculateTrainingData(Mat& trainingImage, vector<vector<int>>& trainingCoords, vector<vector<int>>& trainingData) {
 	Mat hsvImage;
@@ -138,17 +138,19 @@ Mat getTransformation(Mat& image) {
 }
 
 
-void printMetrics(int tp, int fp, int fn, int resultIndex) {
+void printMetrics(int tp, int fp, int fn, float tpError, int resultIndex) {
 	// Calculate and print out some metrics for performance evaluation of the algorithms
 	float accuracy = (float)tp / (tp + fp + fn);
 	float precision = (float)tp / (tp + fp);
 	float recall = (float)tp / (tp + fn);
 	float f1_score = 2 * (precision * recall) / (precision + recall);
+	float avgTPError = tpError / (float)tp;
 
 	RESULTS[resultIndex][0] += accuracy;
 	RESULTS[resultIndex][1] += precision;
 	RESULTS[resultIndex][2] += recall;
 	RESULTS[resultIndex][3] += f1_score;
+	RESULTS[resultIndex][4] += avgTPError;
 
 	cout << endl << "Values" << endl;
 	cout << "True Positive: " << tp << endl;
@@ -159,7 +161,8 @@ void printMetrics(int tp, int fp, int fn, int resultIndex) {
 	cout << "Accuracy: " << accuracy << endl;
 	cout << "Precision: " << precision << endl;
 	cout << "Recall: " << recall << endl;
-	cout << "F1 Score: " << f1_score << endl << endl;
+	cout << "F1 Score: " << f1_score << endl;
+	cout << "Average Match Distance To Centre Error: " << avgTPError << endl << endl;
 }
 
 vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) {
@@ -169,6 +172,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) 
 	int tp = 0;
 	int fp = 0;
 	int fn = 0;
+	float tpError = 0;
 
 	for (int i = 0; i < circles.size(); i++) {
 		int x = cvRound(circles[i][0]);
@@ -186,6 +190,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) 
 				matched[j] = true;
 				matches.push_back(circles[i]);
 				tp++;
+				tpError += sqrt(pow(y - ty, 2) + pow(x - tx, 2));
 				false_circle = false;
 				break;
 			}
@@ -201,7 +206,7 @@ vector<Vec3f> testDetection(vector<Vec3f>& circles, vector<vector<int>>& truth) 
 	}
 	
 	cout << endl << "Circle Detection Results" << endl;
-	printMetrics(tp, fp, fn, 0);
+	printMetrics(tp, fp, fn, tpError, 0);
 
 	return matches;
 
@@ -211,6 +216,7 @@ void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth, int re
 	int tp = 0;
 	int fp = 0;
 	int fn = 0;
+	float tpError = 0;
 
 	for (int i = 0; i < balls.size(); i++) {
 
@@ -232,13 +238,15 @@ void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth, int re
 
 		if (tx == -1 || ty == -1) continue;
 
-		if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2)  // Match if the correct ball centre within threshold distance of the detected ball centre
+		if (sqrt(pow(tx - x, 2) + pow(ty - y, 2)) <= radius + 2) {  // Match if the correct ball centre within threshold distance of the detected ball centre
 			tp++;
+			tpError += sqrt(pow(x - tx, 2) + pow(y - ty, 2));
+		}
 		else
 			fp++;
 	}
 
-	printMetrics(tp, fp, fn, resultIndex);
+	printMetrics(tp, fp, fn, tpError, resultIndex);
 }
 
 int hueDifference(int hue1, int hue2) { // Considers wrap-around distance value for Hue
@@ -559,6 +567,7 @@ void MyApplication()
 		cout << "Average Precision: " << RESULTS[i][1] / number_of_images << endl;
 		cout << "Average Recall: " << RESULTS[i][2] / number_of_images << endl;
 		cout << "Average F1 Score: " << RESULTS[i][3] / number_of_images << endl;
+		cout << "Average Match Distance To Centre Error: " << RESULTS[i][4] / number_of_images << endl;
 		cout << endl;
 	}
 }
