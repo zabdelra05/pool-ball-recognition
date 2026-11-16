@@ -242,8 +242,10 @@ void testClassification(vector<Vec3f>& balls, vector<vector<int>>& truth, int re
 			tp++;
 			tpError += sqrt(pow(x - tx, 2) + pow(y - ty, 2));
 		}
-		else
+		else {
+			fn++;
 			fp++;
+		}
 	}
 
 	printMetrics(tp, fp, fn, tpError, resultIndex);
