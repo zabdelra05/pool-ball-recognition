@@ -9,8 +9,8 @@ vector<vector<int>> TRAINING_COORDS = {
 	{1132, 254},
 	{1184, 262},
 	{1244, 256},
-	{1307, 253}, // White Ball
-	{797, 293}, // Black Ball
+	{1307, 253}, // Black Ball
+	{797, 293}, // White Ball
 
 	// Background Data (random non-ball samples)
 	{300, 300},
@@ -526,12 +526,12 @@ void MyApplication()
 	Mat transformed_training_image = getTransformation(training_image);
 	calculateTrainingData(transformed_training_image, TRAINING_COORDS, TRAINING_DATA);
 
-	for(int i = 0; i < 8; i++) 
+	for(int i = 0; i < 9; i++) 
 		cout << "Training Data for Ball " << i + 1 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
 	
 	cout << endl;
 
-	for (int i = 8; i < TRAINING_DATA.size(); i++)
+	for (int i = 9; i < TRAINING_DATA.size(); i++)
 		cout << "Training Data for Background Sample " << i - 7 << ": Hue = " << TRAINING_DATA[i][0] << ", Saturation = " << TRAINING_DATA[i][1] << ", Value = " << TRAINING_DATA[i][2] << endl;
 
 	//cout << "Training Data for Background" << ": Hue = " << TRAINING_DATA[TRAINING_DATA.size() - 1][0] << ", Saturation = " << TRAINING_DATA[TRAINING_DATA.size() - 1][1] << ", Value = " << TRAINING_DATA[TRAINING_DATA.size() - 1][2] << endl;
